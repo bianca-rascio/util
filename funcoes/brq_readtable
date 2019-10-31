@@ -1,0 +1,20 @@
+
+#funcao
+bqr_readtable <- function(sql){
+  library(bigQueryR)
+  library(googleAuthR)
+  library(bigrquery)
+  Sys.setenv("GCS_AUTH_FILE" = "/home/tvglobo/Rscripts/Funcoes/access-token-bigquery.json")
+  set_service_token("/home/tvglobo/Rscripts/Funcoes/access-token-bigquery.json")
+  #Authenticate Google BQ
+  googleAuthR::gar_attach_auto_auth("https://www.googleapis.com/auth/bigquery",
+                                    environment_var = "GCS_AUTH_FILE")
+  billing <- "inteligencia-gglobo-sandbox"
+  tb <- bq_project_query(billing, sql)
+  table_bq <- bq_table_download(tb)
+  table_bq
+}
+
+#chamada
+df <- bqr_readtable('select * from `performance_dashboards.basedfp_display_geral`')
+source("caminho/bqr_readtable.R")
