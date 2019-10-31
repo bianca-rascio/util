@@ -1,0 +1,16 @@
+#funcao
+bqr_upload <- function(projectId, datasetId, tableId, dataframe, overwrite){
+  library(bigQueryR)
+  Sys.setenv("GCS_AUTH_FILE" = "/home/tvglobo/Rscripts/Funcoes/access-token-bigquery.json")
+  googleAuthR::gar_attach_auto_auth("https://www.googleapis.com/auth/bigquery",
+                                    environment_var = "GCS_AUTH_FILE")
+  bqr_upload_data(projectId = projectId,
+                  datasetId = datasetId,
+                  tableId = tableId,
+                  dataframe,
+                  overwrite = overwrite)
+}
+
+#chamada
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "basedfp_display_geral", basedfp_display4, TRUE)
+source("/caminho/bqr_upload.R")
