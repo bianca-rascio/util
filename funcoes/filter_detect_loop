@@ -1,0 +1,24 @@
+#Funcao
+filter_detect_loop <- function(pattern_list, ...) {
+  for(i in 1:nrow(pattern_list)){
+      tipo <- filter(itens, str_detect(item_de_linha, pattern_list$old_pattern[i]))
+      tipo$tipo_line <- pattern_list$new_pattern[i]
+      if(i == 1){
+        tipo_total <- tipo
+        } else{tipo_total <- rbind(tipo_total, tipo)
+      }
+    }
+  
+  tipo_total <- distinct(tipo_total, item_de_linha, .keep_all = TRUE)
+  return (tipo_total)
+}
+
+
+
+#Chamada
+itens <- distinct(base_overview_geral3, item_de_linha)
+source("/home/tvglobo/Rscripts/Funcoes/filter_detect_loop.R")
+old_pattern <- c("Reach", "2018", "2019", "Util", "VGLOBO", "Visible", "Target")
+new_pattern <- c("Reach", "Remarketing 2018", "Remarketing 2019", "Diaria", "Video", "Video", "Prospect")
+pattern_list <- tibble(old_pattern, new_pattern)  
+itens2 <- filter_detect_loop (pattern_list)
