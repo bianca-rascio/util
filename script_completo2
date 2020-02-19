@@ -1,0 +1,336 @@
+library(RMySQL)
+library(googlesheets)
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(stringr)
+library(utils)
+library(gmailr)
+library(gmailr)
+source("/home/tvglobo/Rscripts/Funcoes/bqr_upload.R")
+source("/home/tvglobo/Rscripts/Funcoes/bqr_readtable.R")
+source("/home/tvglobo/Rscripts/Funcoes/date_pattern.R")
+gc()
+
+
+setwd("/home/tvglobo/Rscripts/Automatizacao_gmail/gmailR/Arquivos_salvos")
+
+campanha1 <- "colgate_ma"
+
+
+#Base DFP
+yesterday <- date_pattern()
+temp_file_list <- list.files(pattern = paste("Base",campanha1,"dfp", sep="_"))
+file <- grep(yesterday, temp_file_list)
+##Inicializar vetor
+basedfp <- ""
+##Tentar ler base do dia anterior
+basedfp <- read.csv(temp_file_list[file], sep = "," , skip = 9 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character") 
+##Forçar leitura
+if(!is.data.frame(basedfp)){
+  basedfp <- read.csv(paste(paste("Base",campanha1,"dfp", sep="_"), "csv", sep = "."), sep = "," , skip =10 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character")
+}
+names(basedfp) <- c("item_de_linha_completo","data","anuncio_completo","tamanho_do_criativo","categoria_de_dispositivo","pedido_completo","position","position_id","id_do_item_de_linha","id_do_anuncio","codigo_da_categoria_de_dispositivos","id_do_pedido","impressoes","cliques","receita","ecpm","impressoes_mensuraveis_activeview","impressoes_visiveis_activeview", "inicio", "ponto_medio", "concluido")
+basedfp <- filter (basedfp, !item_de_linha_completo == "Total")
+##Forcando valores
+basedfp$impressoes <- gsub("\\.", "", basedfp$impressoes)
+basedfp$impressoes <- as.numeric(basedfp$impressoes)
+basedfp$cliques <- gsub("\\.", "", basedfp$cliques)
+basedfp$cliques <- as.numeric(basedfp$cliques)
+basedfp$receita <- gsub("\\.", "", basedfp$receita)
+basedfp$receita <- gsub("\\,", ".", basedfp$receita)
+basedfp$receita <- as.numeric(basedfp$receita)
+basedfp$ecpm <- gsub("\\.", "", basedfp$ecpm)
+basedfp$ecpm <- gsub("\\,", ".", basedfp$ecpm)
+basedfp$ecpm <- as.numeric(basedfp$ecpm)
+basedfp$impressoes_mensuraveis_activeview <- gsub("\\.", "", basedfp$impressoes_mensuraveis_activeview)
+basedfp$impressoes_mensuraveis_activeview <- as.numeric(basedfp$impressoes_mensuraveis_activeview)
+basedfp$impressoes_visiveis_activeview <- gsub("\\.", "", basedfp$impressoes_visiveis_activeview)
+basedfp$impressoes_visiveis_activeview <- as.numeric(basedfp$impressoes_visiveis_activeview)
+basedfp$inicio <- gsub("\\.", "", basedfp$inicio)
+basedfp$inicio <- as.numeric(basedfp$inicio)
+basedfp$ponto_medio <- gsub("\\.", "", basedfp$ponto_medio)
+basedfp$ponto_medio <- as.numeric(basedfp$ponto_medio)
+basedfp$concluido <- gsub("\\.", "", basedfp$concluido)
+basedfp$concluido <- as.numeric(basedfp$concluido)
+basedfp$data <- dmy (basedfp$data)
+##Tirando id's de order e item de linha
+basedfp$pedido <- basedfp$pedido_completo
+basedfp$item_de_linha <- str_sub(basedfp$item_de_linha_completo, start = 10)
+basedfp$anuncio <- basedfp$anuncio_completo
+basedfp <- subset(basedfp, select = -c(item_de_linha_completo, pedido_completo, anuncio_completo))
+##Nomendo a campanha
+basedfp$campanha <- campanha1
+##Removendo acentos de itens de linha
+basedfp$item_de_linha <- iconv(basedfp$item_de_linha, to="ASCII//TRANSLIT")
+basedfp$anuncio <- iconv(basedfp$anuncio, to="ASCII//TRANSLIT")
+
+
+#Criando base para big numbers geral 
+##Separando display e video
+basedfp$tipo_campanha [is.na(basedfp$inicio)] <- "Display"
+basedfp$tipo_campanha [!is.na(basedfp$inicio)] <- "Video"
+#Preparando base geral 
+base_overview_geral <- basedfp[c("data","campanha","tipo_campanha","pedido","item_de_linha","anuncio","categoria_de_dispositivo","tamanho_do_criativo","position","impressoes", "cliques", "receita", "impressoes_visiveis_activeview","impressoes_mensuraveis_activeview","inicio", "ponto_medio", "concluido")]
+base_overview_geral2 <- base_overview_geral
+##Renomeando devices
+devices <- distinct(base_overview_geral2, categoria_de_dispositivo)
+devices$devices2 <- ifelse((devices$categoria_de_dispositivo == "Desktop"), "Desktop", "Mobile")
+base_overview_geral3 <- left_join(base_overview_geral2, devices, by = ("categoria_de_dispositivo"), copy = FALSE, suffix = c(".x", ".y"))
+##Renomeando itens de linha
+itens <- distinct(base_overview_geral3, item_de_linha)
+#source("/home/tvglobo/Rscripts/Funcoes/filter_detect_loop.R")
+#old_pattern <- c("RMKT", "Comida","Genetica", "Pilulas")
+#new_pattern <- c("Remarketing","Comida", "Genetica", "Pilulas")
+#pattern_list <- tibble(old_pattern, new_pattern)  
+#itens2 <- filter_detect_loop (pattern_list)
+itens$tipo_line <- "midia_avulsa"
+base_overview_geral4 <- left_join(base_overview_geral3, itens, by = ("item_de_linha"), copy = FALSE, suffix = c(".x", ".y"))
+
+
+#Filtrando so display
+#Criando base BN geral display
+basedfp_display <- filter (base_overview_geral4, tipo_campanha == "Display")
+##Agrengando
+basedfp_display2 <- basedfp_display[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio","devices2","tamanho_do_criativo","position","impressoes", "cliques", "receita", "impressoes_visiveis_activeview","impressoes_mensuraveis_activeview")]
+basedfp_display2[is.na(basedfp_display2)] <- 0
+basedfp_display3 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +anuncio +devices2 +tamanho_do_criativo +position, basedfp_display2, sum, na.action = na.pass) 
+
+
+#Filtrando so video
+#Criando base BN geral video
+#basedfp_video <- filter (base_overview_geral4, tipo_campanha == "Video")
+##Agrengando
+#basedfp_video2 <- basedfp_video[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio","devices2","tamanho_do_criativo","position", "receita", "inicio", "ponto_medio", "concluido")]
+#basedfp_video2[is.na(basedfp_video2)] <- 0
+#basedfp_video3 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +anuncio +devices2 +tamanho_do_criativo +position, basedfp_video2, sum, na.action = na.pass) 
+
+
+#Visao por devices + RECEITA
+base_devices_geral <- base_overview_geral4[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio","devices2","tamanho_do_criativo","position","impressoes", "cliques", "impressoes_visiveis_activeview","impressoes_mensuraveis_activeview", "receita")]
+base_devices_geral[is.na(base_devices_geral)] <- 0
+base_devices_geral2 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +anuncio +devices2 +tamanho_do_criativo +position, base_devices_geral, sum, na.action = na.pass) 
+
+
+#Visao por regiao
+temp_file_list_regiao <- list.files (pattern = paste("base",campanha1,"regiao","dfp", sep="_"))
+file2 <- grep(yesterday, temp_file_list_regiao)
+##Inicializar vetor
+basedfp_regiao <- ""
+##Tentar ler base do dia anterior
+basedfp_regiao <- read.csv(temp_file_list_regiao[file2], sep = "," , skip = 9 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character") 
+##Forçar leitura
+if(!is.data.frame(basedfp_regiao)){
+  basedfp_regiao <- read.csv(paste(paste("base",campanha1,"regiao","dfp", sep="_"), "csv", sep = "."), sep = "," , skip = 10 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character")
+}
+##Tratando dados
+names(basedfp_regiao) <- c("regiao","data","pais","cidade","id_da_regiao","id_do_pais","id_da_cidade","impressoes","cliques","receita")
+basedfp_regiao <- filter (basedfp_regiao, !regiao == "Total")
+basedfp_regiao2 <- basedfp_regiao[c("regiao","data","pais","cidade","impressoes","cliques")]
+basedfp_regiao2$impressoes <- gsub("\\.", "", basedfp_regiao2$impressoes)
+basedfp_regiao2$impressoes <- as.numeric(basedfp_regiao2$impressoes)
+basedfp_regiao2$cliques <- gsub("\\.", "", basedfp_regiao2$cliques)
+basedfp_regiao2$cliques <- as.numeric(basedfp_regiao2$cliques)
+basedfp_regiao3 <- filter (basedfp_regiao2, pais == "Brazil")
+basedfp_regiao4 <- aggregate(.~ data +pais +regiao +cidade, basedfp_regiao3, sum, na.action=na.pass)
+estado <-str_sub(basedfp_regiao4$regiao, start = 9)
+estado <- as.data.frame(estado)
+basedfp_regiao4$estado <- estado[,1]
+basedfp_regiao5 <- basedfp_regiao4[c("data","pais","estado","impressoes", "cliques")]
+basedfp_regiao5 <- aggregate(.~ data + pais + estado, basedfp_regiao5, sum)
+basedfp_regiao5$estado <- as.character(basedfp_regiao5$estado)
+basedfp_regiao5$estado [!nzchar(basedfp_regiao5$estado)] <- "Nao identificado"
+basedfp_regiao5$campanha <- campanha1
+basedfp_regiao5$data <- dmy(basedfp_regiao5$data)
+
+
+#Visao por activity
+temp_file_list_activity <- list.files(pattern = paste("base",campanha1,"activity","dfp", sep="_"))
+file2 <- grep(yesterday, temp_file_list_activity)
+##Inicializar vetor
+basedfp_activity <- ""
+##Tentar ler base do dia anterior
+basedfp_activity <- read.csv(temp_file_list_activity[file2], sep = "," , skip = 9 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character") 
+##Forçar leitura
+if(!is.data.frame(basedfp_activity)){
+  basedfp_activity <- read.csv(paste(paste("base",campanha1,"activity","dfp", sep="_"), "csv", sep = "."), sep = "," , skip = 9 ,header = TRUE,stringsAsFactors=FALSE, fileEncoding = "UTF-8-BOM", colClasses= "character")
+}
+names(basedfp_activity) <- c("atividade","tamanho_do_criativo","data","pedido_completo","item_de_linha_completo","anuncio_completo","position","position_id","id_atividade","id_do_pedido","id_do_item_de_linha","id_do_anuncio","conversao_de_exibicao", "conversao_de_cliques")
+basedfp_activity <- filter (basedfp_activity, !atividade == "Total")
+basedfp_activity2 <- basedfp_activity[c("atividade","pedido_completo","item_de_linha_completo","tamanho_do_criativo","anuncio_completo","position","data","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity2$conversao_de_cliques <- gsub("\\.", "", basedfp_activity2$conversao_de_cliques)
+basedfp_activity2$conversao_de_cliques <- as.numeric(basedfp_activity2$conversao_de_cliques)
+basedfp_activity2$conversao_de_exibicao <- gsub("\\.", "", basedfp_activity2$conversao_de_exibicao)
+basedfp_activity2$conversao_de_exibicao <- as.numeric(basedfp_activity2$conversao_de_exibicao)
+basedfp_activity2$data <- dmy (basedfp_activity2$data)
+basedfp_activity2$pedido_completo <- iconv(basedfp_activity2$pedido_completo, to="ASCII//TRANSLIT")
+basedfp_activity2$item_de_linha_completo <- iconv(basedfp_activity2$item_de_linha_completo, to="ASCII//TRANSLIT")
+basedfp_activity2$campanha <- campanha1
+##Tirando id's de order e item de linha
+basedfp_activity2$pedido <- basedfp_activity2$pedido_completo
+basedfp_activity2$item_de_linha <- basedfp_activity2$item_de_linha_completo
+basedfp_activity2$anuncio <- basedfp_activity2$anuncio_completo
+basedfp_activity2 <- subset(basedfp_activity2, select = -c(item_de_linha_completo, pedido_completo, anuncio_completo))
+##Renomeando itens de linha
+basedfp_activity2 <- left_join(basedfp_activity2, itens, by = ("item_de_linha"), copy = FALSE, suffix = c(".x", ".y"))
+##Renomeando criativos
+basedfp_activity3 <- basedfp_activity2
+##Classificando leads
+leads <- distinct(basedfp_activity3, atividade)
+leads$tipo_lead <- sub( '.*Promocao - ', '' , leads$atividade)
+basedfp_activity4 <- left_join(basedfp_activity3, leads, by = ("atividade"), copy = FALSE, suffix = c(".x", ".y"))
+##Renomeando formatos
+basedfp_activity5 <- basedfp_activity4
+basedfp_activity5$formato <- ifelse(basedfp_activity5$tamanho_do_criativo == "1280 x 720v", "Video", "Display")
+##Agregando  
+basedfp_activity_geral <- basedfp_activity5[c("data","campanha","pedido","tamanho_do_criativo","anuncio","tipo_lead","tipo_line","position","conversao_de_exibicao", "conversao_de_cliques")]
+#basedfp_activity_geral <- filter (basedfp_activity_geral, tipo_lead == "Resposta do pré cadastro" )
+basedfp_activity_geral[is.na(basedfp_activity_geral)] <- 0
+basedfp_activity_geral2 <-aggregate(.~ data +campanha +pedido +tamanho_do_criativo +anuncio +tipo_lead +tipo_line +position, basedfp_activity_geral, sum, na.action = na.pass) 
+##Agregando novamente para incluir excessão com item de linha (vira base activity geral)
+basedfp_activity_geral_anuncio <- basedfp_activity5[c("data","campanha","pedido","item_de_linha", "tamanho_do_criativo","anuncio","tipo_lead","position","conversao_de_exibicao", "conversao_de_cliques")]
+#basedfp_activity_geral_anuncio <- filter (basedfp_activity_geral_anuncio, tipo_lead == "Lead Qualificado Novo")
+basedfp_activity_geral_anuncio[is.na(basedfp_activity_geral_anuncio)] <- 0
+basedfp_activity_geral_anuncio2 <-aggregate(.~ data +campanha +pedido +item_de_linha +tamanho_do_criativo +anuncio +tipo_lead +position, basedfp_activity_geral_anuncio, sum, na.action = na.pass) 
+##Agregando novamente para excluir activity em especifico (esse é usado para join com impressões)
+basedfp_activity_geral_anuncio_v2 <- basedfp_activity5[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio", "tamanho_do_criativo","tipo_lead","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_geral_anuncio_v2 <- filter (basedfp_activity_geral_anuncio_v2, tipo_lead == "Funil - Etapa 1 - CPF")
+basedfp_activity_geral_anuncio_v2[is.na(basedfp_activity_geral_anuncio_v2)] <- 0
+basedfp_activity_geral_anuncio_v23 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +tipo_lead +position, basedfp_activity_geral_anuncio_v2, sum, na.action = na.pass) 
+
+
+###Juntando com informacoes de impressoes e cliques e receita (esse com item de linha + pedido +criativo)
+######Arrumando base de devices para incluir receita
+base_devices_geral21 <- base_overview_geral4[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio","devices2","tamanho_do_criativo","position","impressoes", "cliques", "impressoes_visiveis_activeview","impressoes_mensuraveis_activeview", "receita")]
+base_devices_geral21[is.na(base_devices_geral21)] <- 0
+base_devices_geral22 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +anuncio +devices2 +tamanho_do_criativo +position, base_devices_geral21, sum, na.action = na.pass) 
+###Selecioanndo colunas da base de devices +TIPO_LINE
+basedfp_devices_ajustada <- base_devices_geral22[c("data","campanha","pedido","tamanho_do_criativo","item_de_linha","tipo_line","anuncio","position","impressoes","cliques","impressoes_visiveis_activeview","impressoes_mensuraveis_activeview", "receita")]
+basedfp_devices_ajustada[is.na(basedfp_devices_ajustada)] <- 0
+basedfp_devices_ajustada2 <-aggregate(.~ campanha +data +pedido +item_de_linha +tipo_line +anuncio +tamanho_do_criativo +position, basedfp_devices_ajustada, sum, na.action = na.pass) 
+###Reduzindo colunas base activity e agregando por formato
+basedfp_activity_geral_reduzida_anun_ <- basedfp_activity_geral_anuncio_v23[c("data","campanha","pedido","item_de_linha","tipo_line","tamanho_do_criativo","anuncio","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_geral_reduzida_anun_[is.na(basedfp_activity_geral_reduzida_anun_)] <- 0
+basedfp_activity_geral_reduzida_anun_2 <-aggregate(.~ campanha +data +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +position, basedfp_activity_geral_reduzida_anun_, sum, na.action = na.pass) 
+###Join com impressoes
+basedfp_activity_e_impressoes_geral_anun_ <- full_join(basedfp_devices_ajustada2, basedfp_activity_geral_reduzida_anun_2, by = c("campanha","data","pedido", "tamanho_do_criativo", "item_de_linha", "anuncio", "tipo_line","position"))
+basedfp_activity_e_impressoes_geral_anun_[is.na(basedfp_activity_e_impressoes_geral_anun_)] <- 0
+
+
+#Exceção com mais de um activity principal
+##Agregando novamente para incluir activity em especifico (esse é usado para join com impressões)
+basedfp_activity_geral_anuncio_exc <- basedfp_activity5[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio", "tamanho_do_criativo","tipo_lead","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_geral_anuncio_exc2 <- filter (basedfp_activity_geral_anuncio_exc, tipo_lead == "Funil - Etapa 2 - Dados Pessoais")
+basedfp_activity_geral_anuncio_exc2[is.na(basedfp_activity_geral_anuncio_exc2)] <- 0
+basedfp_activity_geral_anuncio_exc3 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +tipo_lead +position, basedfp_activity_geral_anuncio_exc2, sum, na.action = na.pass) 
+##Juntando com informacoes de impressoes e cliques e receita (esse com item de linha + pedido +criativo)
+###Reduzindo colunas base activity e agregando por formato
+basedfp_activity_geral_reduzida_exc <- basedfp_activity_geral_anuncio_exc3[c("data","campanha","pedido","item_de_linha","tipo_line","tamanho_do_criativo","anuncio","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_geral_reduzida_exc[is.na(basedfp_activity_geral_reduzida_exc)] <- 0
+basedfp_activity_geral_reduzida_exc2 <-aggregate(.~ campanha +data +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +position, basedfp_activity_geral_reduzida_exc, sum, na.action = na.pass) 
+###Join com impressoes
+basedfp_activity_e_impressoes_geral_anun_exc <- full_join(basedfp_devices_ajustada2, basedfp_activity_geral_reduzida_exc2, by = c("campanha","data","pedido", "tamanho_do_criativo", "item_de_linha", "anuncio", "tipo_line","position"))
+basedfp_activity_e_impressoes_geral_anun_exc[is.na(basedfp_activity_e_impressoes_geral_anun_exc)] <- 0
+
+
+#Exceção com 3 activity principal
+##Agregando novamente para incluir activity em especifico (esse é usado para join com impressões)
+basedfp_activity_exc <- basedfp_activity5[c("data","campanha","pedido","item_de_linha","tipo_line","anuncio", "tamanho_do_criativo","tipo_lead","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_exc2 <- filter (basedfp_activity_exc, tipo_lead == "Etapa 3 - Cupom - Sucesso")
+basedfp_activity_exc2[is.na(basedfp_activity_exc2)] <- 0
+basedfp_activity_exc3 <-aggregate(.~ data +campanha +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +tipo_lead +position, basedfp_activity_exc2, sum, na.action = na.pass) 
+##Juntando com informacoes de impressoes e cliques e receita (esse com item de linha + pedido +criativo)
+###Reduzindo colunas base activity e agregando por formato
+basedfp_activity_reduzida_exc <- basedfp_activity_exc3[c("data","campanha","pedido","item_de_linha","tipo_line","tamanho_do_criativo","anuncio","position","conversao_de_exibicao", "conversao_de_cliques")]
+basedfp_activity_reduzida_exc[is.na(basedfp_activity_reduzida_exc)] <- 0
+basedfp_activity_reduzida_exc2 <-aggregate(.~ campanha +data +pedido +item_de_linha +tipo_line +tamanho_do_criativo +anuncio +position, basedfp_activity_reduzida_exc, sum, na.action = na.pass) 
+###Join com impressoes
+basedfp_activity_e_impressoes_exc <- full_join(basedfp_devices_ajustada2, basedfp_activity_reduzida_exc2, by = c("campanha","data","pedido", "tamanho_do_criativo", "item_de_linha", "anuncio", "tipo_line","position"))
+basedfp_activity_e_impressoes_exc[is.na(basedfp_activity_e_impressoes_exc)] <- 0
+
+
+#Preparando as bases para atualizar com os valores da nova campanha
+#Lendo historicos no banco
+source("/home/tvglobo/Rscripts/Funcoes/bqr_readtable.R")
+##Base Big Numbers Display Geral
+display_geral <- bqr_readtable('select * from `performance_dashboards.base_display_geral`')
+display_geral$data <- ymd(display_geral$data)
+##Base Regiao Geral
+regiao_geral <- bqr_readtable('select * from `performance_dashboards.base_regiao_geral`')
+regiao_geral$data <- ymd(regiao_geral$data)
+##Base Big Numbers Video Geral
+#video_geral <- bqr_readtable('select * from `performance_dashboards.base_video_geral`')
+#video_geral$data <- ymd(video_geral$data)
+##Base Devices geral
+devices_geral <- bqr_readtable('select * from `performance_dashboards.base_devices_geral`')
+devices_geral$data <- ymd(devices_geral$data)
+##Base Activity geral + anuncio
+historico_activity_geral_anun <- bqr_readtable('select * from `performance_dashboards.base_activity_geral_anun`')
+historico_activity_geral_anun$data <- ymd(historico_activity_geral_anun$data)
+##Base Activity e impressoes geral + ITEM DE LINHA + RECEITA + PEDIDO + CRIATIVO
+historico_activity_e_impressoes_geral_v2 <- bqr_readtable('select * from `performance_dashboards.base_activity_e_impressoes_geral`')
+historico_activity_e_impressoes_geral_v2$data <- ymd(historico_activity_e_impressoes_geral_v2$data)
+##Base Activity e impressoes geral EXC
+historico_activity_e_impressoes_geral_exc <- bqr_readtable('select * from `performance_dashboards.base_activity_e_impressoes_geral_2`')
+historico_activity_e_impressoes_geral_exc$data <- ymd(historico_activity_e_impressoes_geral_exc$data)
+##Base Activity e impressoes geral EXC2
+historico2_activity_e_impressoes_geral_exc <- bqr_readtable('select * from `performance_dashboards.base_activity_e_impressoes_geral_3`')
+historico2_activity_e_impressoes_geral_exc$data <- ymd(historico2_activity_e_impressoes_geral_exc$data)
+
+
+#Limpando as linhas que contem a campanha em questao
+display_geral2 <- filter (display_geral, campanha != campanha1)
+regiao_geral2 <- filter (regiao_geral, campanha != campanha1)
+#video_geral2 <- filter (video_geral, campanha != campanha1)
+devices_gera2 <- filter (devices_geral, campanha != campanha1)
+historico_activity_geral_anun2 <- filter (historico_activity_geral_anun, campanha != campanha1)
+historico_activity_e_impressoes_geral_v22 <- filter (historico_activity_e_impressoes_geral_v2, campanha != campanha1)
+historico_activity_e_impressoes_geral_exc2 <- filter (historico_activity_e_impressoes_geral_exc, campanha != campanha1)
+historico2_activity_e_impressoes_geral_exc2 <- filter (historico2_activity_e_impressoes_geral_exc, campanha != campanha1)
+
+
+#Bind para pregar novos valores (valores da campanha em questao)
+basedfp_display4 <- rbind(display_geral2, basedfp_display3)
+basedfp_regiao6 <- rbind(regiao_geral2,basedfp_regiao5)
+#basedfp_video4 <- rbind(video_geral2, basedfp_video3)
+base_devices_geral3 <- rbind(devices_gera2, base_devices_geral2)
+basedfp_activity_geral_anuncio3 <- rbind(historico_activity_geral_anun2, basedfp_activity_geral_anuncio2)
+basedfp_activity_e_impressoes_geral_anun_2 <- rbind(historico_activity_e_impressoes_geral_v22, basedfp_activity_e_impressoes_geral_anun_)
+basedfp_activity_e_impressoes_geral_anun_exc2 <- rbind(historico_activity_e_impressoes_geral_exc2, basedfp_activity_e_impressoes_geral_anun_exc)
+basedfp_activity_e_impressoes_exc2 <- rbind(historico2_activity_e_impressoes_geral_exc2, basedfp_activity_e_impressoes_exc)
+
+
+#Exportando para o banco de dados
+source("/home/tvglobo/Rscripts/Funcoes/bqr_upload.R")
+##Base Big Numbers Display Geral
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_display_geral", basedfp_display4, TRUE)
+##Base Big Numbers Video Geral
+#bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_video_geral", basedfp_video4, TRUE)
+##Base Regiao Geral
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_regiao_geral", basedfp_regiao6, TRUE)
+##Base Devices Geral
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_devices_geral", base_devices_geral3, TRUE)
+##Base Activity Geral 
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_activity_geral_anun", basedfp_activity_geral_anuncio3, TRUE)
+##Base Activity e impressoes + ITEM DE LINHA + RECEITA +ORDER
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_activity_e_impressoes_geral", basedfp_activity_e_impressoes_geral_anun_2, TRUE)
+##Base Activity e impressoes EXC
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_activity_e_impressoes_geral_2", basedfp_activity_e_impressoes_geral_anun_exc2, TRUE)
+##Base Activity e impressoes EXC 2
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "base_activity_e_impressoes_geral_3", basedfp_activity_e_impressoes_exc2, TRUE)
+
+
+
+#Atualizando controle no bq
+source("/home/tvglobo/Rscripts/Funcoes/controle_bq.R")
+controle <- controle_bq(paste0(campanha1))
+source("/home/tvglobo/Rscripts/Funcoes/bqr_upload.R")
+bqr_upload("inteligencia-gglobo-sandbox", "performance_dashboards", "controle", controle, FALSE)
+
+
+rm(list=ls())
+#.rs.restartR()
+
+
+
+
