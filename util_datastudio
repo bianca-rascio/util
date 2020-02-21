@@ -1,0 +1,21 @@
+CASE
+   WHEN REGEXP_MATCH(tamanho_do_criativo, "1280 x 720v") THEN "Pre Roll"
+       ELSE tamanho_do_criativo
+END
+
+
+
+
+REGEXP_EXTRACT(item_de_linha, 'GE(.*)')
+
+
+
+CASE
+   WHEN REGEXP_MATCH(tamanho_do_criativo, "1280 x 720v") THEN "Pre Roll"
+       ELSE tamanho_do_criativo
+END
+
+
+
+
+
